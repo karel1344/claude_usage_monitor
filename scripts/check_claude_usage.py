@@ -259,7 +259,7 @@ def extract_percent(section: dict | None) -> float | None:
     return None
 
 
-def format_reset(section: dict | None) -> str:
+def format_reset(section: dict | None, now: datetime | None = None) -> str:
     if not isinstance(section, dict):
         return ""
     for key in ("resets_at", "reset_at", "reset"):
@@ -270,10 +270,16 @@ def format_reset(section: dict | None) -> str:
             dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
         except ValueError:
             return f"리셋: {value}"
-        now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
-        remaining = int((dt - now).total_seconds())
-        if remaining <= 0:
-            return "리셋까지: 곧"
+        current = now
+        if current is None:
+            current = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+        elif dt.tzinfo:
+            if current.tzinfo is None:
+                current = current.astimezone()
+            current = current.astimezone(dt.tzinfo)
+        elif current.tzinfo is not None:
+            current = current.astimezone().replace(tzinfo=None)
+        remaining = max(0, int((dt - current).total_seconds()))
         days, rem = divmod(remaining, 86400)
         hours, rem = divmod(rem, 3600)
         minutes, seconds = divmod(rem, 60)
@@ -285,12 +291,15 @@ def format_reset(section: dict | None) -> str:
 
 class UsageApp:
     REFRESH_MS = 300_000  # 5분
+    STATUS_TICK_MS = 1_000  # 1초
 
     def __init__(self, root: tk.Tk, tokens: dict):
         self.root = root
         self.tokens = tokens
         self.last_refresh_at: datetime | None = None
         self.last_error: str | None = None
+        self.last_five_usage: dict | None = None
+        self.last_seven_usage: dict | None = None
 
         root.title("Claude 사용량")
         root.geometry("420x260")
@@ -377,7 +386,7 @@ class UsageApp:
 
     def _tick_status(self):
         self._update_status_text()
-        self.root.after(20_000, self._tick_status)
+        self.root.after(self.STATUS_TICK_MS, self._tick_status)
 
     def _update_status_text(self):
         if self.last_error:
@@ -386,13 +395,21 @@ class UsageApp:
         if self.last_refresh_at is None:
             self.status_label.config(text="갱신 대기 중...", foreground="#666")
             return
-        minutes = int((datetime.now() - self.last_refresh_at).total_seconds() // 60)
+        now = datetime.now()
+        minutes = int((now - self.last_refresh_at).total_seconds() // 60)
         text = "마지막 갱신: 방금" if minutes <= 0 else f"마지막 갱신: {minutes}분 전"
         self.status_label.config(text=text, foreground="#666")
+        self._update_reset_labels(now.astimezone())
+
+    def _update_reset_labels(self, now: datetime):
+        self.five_hour_reset.config(text=format_reset(self.last_five_usage, now=now))
+        self.seven_day_reset.config(text=format_reset(self.last_seven_usage, now=now))
 
     def _apply_usage(self, usage: dict):
         five = usage.get("five_hour")
         seven = usage.get("seven_day")
+        self.last_five_usage = five if isinstance(five, dict) else None
+        self.last_seven_usage = seven if isinstance(seven, dict) else None
 
         five_pct = extract_percent(five)
         seven_pct = extract_percent(seven)
@@ -403,7 +420,7 @@ class UsageApp:
         else:
             self.five_hour_label.config(text=f"{five_pct:.0f}%")
             self.five_hour_bar["value"] = max(0.0, min(100.0, five_pct))
-        self.five_hour_reset.config(text=format_reset(five))
+        self.five_hour_reset.config(text=format_reset(self.last_five_usage))
 
         if seven_pct is None:
             self.seven_day_label.config(text="데이터 없음")
@@ -411,7 +428,7 @@ class UsageApp:
         else:
             self.seven_day_label.config(text=f"{seven_pct:.0f}%")
             self.seven_day_bar["value"] = max(0.0, min(100.0, seven_pct))
-        self.seven_day_reset.config(text=format_reset(seven))
+        self.seven_day_reset.config(text=format_reset(self.last_seven_usage))
 
 
 if __name__ == "__main__":
