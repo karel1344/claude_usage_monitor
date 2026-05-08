@@ -254,8 +254,7 @@ def extract_percent(section: dict | None) -> float | None:
         if key in section:
             value = section[key]
             if isinstance(value, (int, float)):
-                # 0~1 범위면 100배, 그 외엔 그대로
-                return value * 100 if value <= 1 else float(value)
+                return float(value)
     return None
 
 
